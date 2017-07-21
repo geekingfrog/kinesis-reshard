@@ -13,10 +13,45 @@ build-type:          Simple
 cabal-version:       >=1.10
 extra-source-files:  README.md
 
-executable kinesis-reshard
+--executable kinesis-reshard
+library
   hs-source-dirs:      src
   default-language:    Haskell2010
-  ghc-options: -O0
-  main-is:             Main.hs
+  ghc-options: -O0 -fwarn-incomplete-patterns
+  -- main-is:             Main.hs
   build-depends:       base >= 4.7 && < 5
+                     , text
+                     , amazonka
+                     , amazonka-core
+                     , amazonka-kinesis
+                     , lens
+                     , unordered-containers
+                     , optparse-applicative
+  exposed-modules:     Reshard.Kinesis
+                     , Reshard.Types
+                     , Reshard.Operations
 
+executable reshard
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  ghc-options: -O0 -threaded -with-rtsopts=-N -with-rtsopts=-xc
+  build-depends:       base >= 4.7 && < 5
+                     , text
+                     , amazonka
+                     , amazonka-core
+                     , amazonka-kinesis
+                     , lens
+                     , unordered-containers
+                     , kinesis-reshard
+  main-is:             Main.hs
+
+test-suite test
+  type:               exitcode-stdio-1.0
+  default-language:   Haskell2010
+  ghc-options: -O0 -threaded -with-rtsopts=-N -Wall -Wno-orphans
+  hs-source-dirs:     test
+  main-is:            Test.hs
+  build-depends:      base >= 4.7 && < 5
+                    , QuickCheck
+                    , hspec
+                    , kinesis-reshard

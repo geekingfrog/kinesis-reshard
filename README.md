@@ -1,0 +1,1 @@
+# Reshard any kinesis stream
