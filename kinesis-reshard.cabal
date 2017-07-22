@@ -34,7 +34,7 @@ library
 executable reshard
   hs-source-dirs:      src
   default-language:    Haskell2010
-  ghc-options: -O0 -threaded -with-rtsopts=-N -with-rtsopts=-xc
+  ghc-options: -O0 -threaded -with-rtsopts=-N
   build-depends:       base >= 4.7 && < 5
                      , text
                      , amazonka
@@ -42,8 +42,13 @@ executable reshard
                      , amazonka-kinesis
                      , lens
                      , unordered-containers
+                     , optparse-applicative
                      , kinesis-reshard
   main-is:             Main.hs
+  other-modules:       Reshard.Kinesis
+                     , Reshard.Types
+                     , Reshard.Operations
+                     , Reshard.Cli
 
 test-suite test
   type:               exitcode-stdio-1.0
@@ -55,3 +60,5 @@ test-suite test
                     , QuickCheck
                     , hspec
                     , kinesis-reshard
+  other-modules:      Check
+                    , Spec

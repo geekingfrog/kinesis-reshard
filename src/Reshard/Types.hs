@@ -34,3 +34,9 @@ newtype ReshardException = ShardNotFoundException Text
     deriving (Show, Typeable)
 
 instance Exception ReshardException
+
+data Options = Options
+    { optStreamName :: !Text
+    , optNumberOfShard :: !Int
+    , optAWSProfile :: Maybe Text
+    } deriving (Show)

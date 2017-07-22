@@ -1,11 +1,8 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 module Check (check) where
 
 import Test.QuickCheck
 import Reshard.Types
 import qualified Reshard.Operations as Op
-import Spec
 
 newtype ShardNumber = ShardNumber Int deriving Show
 
@@ -20,13 +17,21 @@ instance Arbitrary ShardRange where
     -- the real limit is *much* larger, but this should be enough for
     -- the tests and makes it easier to debug failing test cases
     arbitrary = ShardRange <$> choose (0, 1000000)
-    -- arbitrary = ShardRange <$> choose (0, 340282366920938463463374607431768211455)
 
 instance Arbitrary Shard where
     arbitrary = do
         (ShardRange start) <- arbitrary
         (ShardRange end) <- suchThat arbitrary (\(ShardRange x) -> x > start)
         pure $ Shard start end
+
+
+newtype Stream = Stream [Shard] deriving (Show)
+
+instance Arbitrary Stream where
+    arbitrary = do
+        (ShardRange end) <- arbitrary
+        (ShardNumber n) <- arbitrary
+        pure $ Stream (Op.makeStream n 0 end)
 
 
 prop_validStream :: [Shard] -> Property
@@ -61,6 +66,21 @@ operationInStream shards op@(Split s _) = counterexample ("operation not in stre
 operationInStream shards op@(Merge (s1, s2)) = counterexample ("operation not in stream: " ++ show op) $ s1 `elem` shards .&&. s2 `elem` shards
 
 
+prop_validIntermediateStream :: ShardNumber -> Stream -> Property
+prop_validIntermediateStream (ShardNumber n) (Stream shards) =
+  let
+    shards' = Op.intermediateStream n shards
+    starts = fmap shardStart shards'
+    ends = fmap shardEnd shards'
+  in
+    counterexample "intermediate stream must have at least as many shards as max(initial stream, final stream)" $
+        length shards' >= max n (length shards)
+    .&&. conjoin (fmap (\x -> counterexample (show (shardStart x) ++ " not a starting point in intermediate stream " ++ show shards')
+        (shardStart x `elem` starts)) shards)
+    .&&. conjoin (fmap (\x -> counterexample (show (shardEnd x) ++ " not an ending point in intermediate stream " ++ show shards')
+        (shardEnd x `elem` ends)) shards)
+
+
 prop_validIntermediateStreams :: [Shard] -> [Operation] -> Property
 prop_validIntermediateStreams _ [] = property True
 prop_validIntermediateStreams shards (op:ops) =
@@ -82,4 +102,4 @@ prop_validOperations (ShardNumber n) (ShardNumber n') (ShardRange end) =
 
 
 check :: IO ()
-check = quickCheck $ prop_validMakeStream .&&. prop_validOperations
+check = quickCheck $ prop_validMakeStream .&&. prop_validOperations .&&. prop_validIntermediateStream

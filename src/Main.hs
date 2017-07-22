@@ -11,10 +11,12 @@ import Data.Text (Text)
 import Reshard.Types
 import Reshard.Kinesis
 import Reshard.Operations
+import Reshard.Cli
+
 import Control.Monad
 
 main :: IO ()
-main = print $ testPure 411 (makeStream 21 0 41597004636586299241267257522613247598)
+main = testOpts
 
 -- testAWS :: Text -> Int -> IO ()
 -- testAWS streamName targetNumber = tmpRun $ do
