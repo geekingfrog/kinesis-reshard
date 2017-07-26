@@ -28,7 +28,15 @@ options = Options
         )
 
 
+opts :: ParserInfo Options
+opts = info
+    (options <**> helper)
+    (fullDesc <> progDesc "Evenly reshard a kinesis stream")
+
+parseArgs :: IO Options
+parseArgs = execParser opts
+
 testOpts :: IO ()
 testOpts = do
-    opts <- execParser (info (helper <*> options) fullDesc)
-    print opts
+    o <- execParser opts
+    print o

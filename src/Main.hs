@@ -9,14 +9,54 @@ import qualified Data.List as List
 
 import Data.Text (Text)
 import Reshard.Types
-import Reshard.Kinesis
-import Reshard.Operations
-import Reshard.Cli
+import Reshard.Kinesis as Kinesis
+import qualified Reshard.Operations as Operations
+import qualified Reshard.Cli as Cli
 
+import Data.Monoid
 import Control.Monad
 
+import qualified Network.AWS as AWS
+import qualified Network.AWS.Kinesis as K
+import Control.Lens
+import Data.Maybe
+
 main :: IO ()
-main = testOpts
+main = Cli.parseArgs >>= \args -> Kinesis.runAWS (optAWSProfile args) $ do
+    description <- Kinesis.describeStream (optStreamName args)
+    let shards = List.sort $ awsShard <$> Kinesis.getOpenShards description
+    case Operations.operations (optNumberOfShard args) shards of
+        Left _ -> liftIO $ putStrLn "ERROR!" -- TODO give more details here
+        Right operations -> do
+            let noops = [1 | Noop x <- operations]
+            let actualNumberOfOps = length operations - length noops
+            if actualNumberOfOps == 0
+                then liftIO $ putStrLn "Stream already evenly split, exiting"
+                else do
+                    liftIO $ putStrLn $ "Found "
+                        <> show (length shards)
+                        <> " open shards. Target is "
+                        <> show (optNumberOfShard args)
+                        <> ". Will apply "
+                        <> show actualNumberOfOps
+                        <> " operations."
+                    mapM_ (applyOperation (optStreamName args)) operations
+                    liftIO $ putStrLn "All done."
+
+-- main :: IO ()
+-- main = Kinesis.runAWS Nothing $ do
+--     let streamName = "foo"
+--     -- Kinesis.describeStream streamName >>= liftIO . print
+--     result <- AWS.trying AWS._ServiceError (Kinesis.describeStream streamName)
+--     case result of
+--         Left err ->
+--           let
+--             msg = fromMaybe "Unknown error" (err ^. AWS.serviceMessage)
+--           in
+--             liftIO $ print msg
+--         -- Left _ -> liftIO $ putStrLn "boomed !"
+--         Right description -> liftIO $ putStrLn $ "foo" <> show description
+
 
 -- testAWS :: Text -> Int -> IO ()
 -- testAWS streamName targetNumber = tmpRun $ do
@@ -29,14 +69,14 @@ main = testOpts
 --         mapM_ (Reshard.Kinesis.applyOperation streamName) ops
 --         liftIO $ putStrLn "all done"
 
-testPure :: Int -> [Shard] -> Either String [Shard]
-testPure targetShardNum shards = case operations targetShardNum shards of
-    Left x -> Left (show x)
-    Right ops -> case foldM Reshard.Operations.applyOperation shards ops of
-        Left err -> Left (show err)
-        Right res -> Right res
-  -- where
-  --   ops = operations targetShardNum shards
+-- testPure :: Int -> [Shard] -> Either String [Shard]
+-- testPure targetShardNum shards = case operations targetShardNum shards of
+--     Left x -> Left (show x)
+--     Right ops -> case foldM Reshard.Operations.applyOperation shards ops of
+--         Left err -> Left (show err)
+--         Right res -> Right res
+--   -- where
+--   --   ops = operations targetShardNum shards
 
   -- let
   --   initialStream = makeStream 1 0 340282366920938463463374607431768211455
