@@ -95,7 +95,7 @@ prop_validOperations (ShardNumber n) (ShardNumber n') (ShardRange end) =
     end > fromIntegral n * 2 && end > fromIntegral n' * 2 ==>
   let shards = Op.makeStream n 0 end
   in case Op.operations n' shards of
-        Left (s, shards) -> counterexample ("Cannot perform operation on " ++ show s ++ " - " ++ show shards) False
+        Left (s, buggyShards) -> counterexample ("Cannot perform operation on " ++ show s ++ " - " ++ show buggyShards) False
         Right ops ->
             conjoin (fmap prop_validOperation ops)
             .&&. prop_validIntermediateStreams shards ops

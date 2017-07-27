@@ -1,4 +1,4 @@
-module Reshard.Cli where
+module Reshard.Cli (parseArgs) where
 
 import Options.Applicative
 import Data.Monoid
@@ -35,8 +35,3 @@ opts = info
 
 parseArgs :: IO Options
 parseArgs = execParser opts
-
-testOpts :: IO ()
-testOpts = do
-    o <- execParser opts
-    print o

@@ -1,7 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Reshard.Kinesis where
+module Reshard.Kinesis
+    ( runAWS
+    , describeStream
+    , getOpenShards
+    , applyOperation
+    )
+where
 
 import Data.Maybe
 import Data.Monoid
@@ -10,36 +16,22 @@ import Control.Exception
 import Data.Text
 import Control.Monad.IO.Class (liftIO)
 import Control.Lens
-import Network.AWS as AWS
-import Network.AWS.Auth as AWS
+import qualified Network.AWS as AWS
+import Network.AWS (MonadAWS, AWS)
 import Network.AWS.Data.Text (fromText)
 import qualified Network.AWS.Kinesis as Kinesis
 import qualified System.IO as IO
-import qualified Data.HashMap.Strict as Map
 import Reshard.Types
 import qualified Data.List as List
 import qualified Data.HashSet as Set
 
-import Control.Monad
 import qualified System.Environment as Env
-
-test :: IO ()
-test = do
-    lgr <- newLogger Info IO.stdout
-    env <- newEnv Discover
-    let streamName = "cc3-gcharvet-test-reshard"
-    runResourceT $ AWS.runAWS (env & envLogger .~ lgr) $ within Ireland $ do
-        -- let req = Kinesis.describeStream "cc3-gcharvet-test-reshard"
-        -- send req
-        let shard = Shard 0 170141183460469231731687303715884105727
-        applyOperation streamName (Split shard 100000)
-
 
 runAWS :: Maybe Text -> AWS a -> IO a
 runAWS mbProfile action = do
-    lgr <- newLogger Info IO.stdout
+    lgr <- AWS.newLogger AWS.Info IO.stdout
     let cred = maybe AWS.Discover AWS.FromProfile mbProfile
-    env <- newEnv cred
+    env <- AWS.newEnv cred
 
     -- version 1.5.0 and up will pick up the region from the env variable but
     -- until then, manually check for the region and set it if present
@@ -47,7 +39,7 @@ runAWS mbProfile action = do
     let env' = case region >>= (fromText . pack) of
             Left _ -> env
             Right r -> env & AWS.envRegion .~ r
-    runResourceT $ AWS.runAWS (env' & envLogger .~ lgr) action
+    AWS.runResourceT $ AWS.runAWS (env' & AWS.envLogger .~ lgr) action
 
 getEnvVariable :: String -> IO (Either String String)
 getEnvVariable name = do
@@ -56,25 +48,9 @@ getEnvVariable name = do
         Left (exc :: SomeException) -> Left (show exc)
         Right r -> Right r
 
-tmpRun :: AWS a -> IO a
-tmpRun action = do
-    lgr <- newLogger Info IO.stdout
-    env <- newEnv Discover
-    runResourceT $ AWS.runAWS (env & envLogger .~ lgr) $ within Ireland action
-
-
-testDescribe :: IO Kinesis.DescribeStreamResponse
-testDescribe = do
-    lgr <- newLogger Info IO.stdout
-    env <- newEnv Discover
-    let streamName = "cc3-gcharvet-test-reshard"
-    runResourceT $ AWS.runAWS (env & envLogger .~ lgr) $ within Ireland $ do
-        let req = Kinesis.describeStream "cc3-gcharvet-test-reshard"
-        send req
-
 describeStream :: (MonadAWS m) => Text -> m Kinesis.DescribeStreamResponse
 describeStream streamName = do
-    resp <- send $ Kinesis.describeStream streamName
+    resp <- AWS.send $ Kinesis.describeStream streamName
     pure resp
 
 
@@ -113,7 +89,7 @@ applyOperation streamName (Split shard exclusiveStartKey) = do
             -- TODO log instead of simple putStrLn
             liftIO $ putStrLn $ "Splitting " <> unpack sId <> " at point " <> show exclusiveStartKey
             let req = Kinesis.splitShard streamName sId (pack $ show exclusiveStartKey)
-            resp <- send req
+            AWS.send req
             waitStreamUpdated streamName
 applyOperation streamName (Merge (shard1, shard2)) = do
     mbId1 <- findShardId streamName shard1
@@ -122,7 +98,7 @@ applyOperation streamName (Merge (shard1, shard2)) = do
         (Just id1, Just id2) -> do
             -- TODO log instead of simple putStrLn
             liftIO $ putStrLn $ "Merging shards: " <> unpack id1 <> " and " <> unpack id2
-            resp <- send $ Kinesis.mergeShards streamName id1 id2
+            AWS.send $ Kinesis.mergeShards streamName id1 id2
             waitStreamUpdated streamName
         (Nothing, _) -> liftIO $ throwIO $ ShardNotFoundException (pack $ show shard1)
         (_, Nothing) -> liftIO $ throwIO $ ShardNotFoundException (pack $ show shard2)
@@ -139,7 +115,7 @@ waitStreamUpdated :: (MonadAWS m) => Text -> m ()
 waitStreamUpdated streamName = loop
   where
     loop = do
-        resp <- send $ Kinesis.describeStream streamName
+        resp <- AWS.send $ Kinesis.describeStream streamName
         let status = resp ^. Kinesis.dsrsStreamDescription . Kinesis.sdStreamStatus
         if status /= Kinesis.Active
             then liftIO (threadDelay (10 ^ 6)) >> loop

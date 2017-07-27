@@ -1,9 +1,34 @@
 module Reshard.Operations where
 
+import Data.Monoid ((<>))
+import Control.Monad.IO.Class (liftIO)
 import qualified Data.List as List
 import Reshard.Types
+import qualified Reshard.Kinesis as Kinesis
 
-import qualified Debug.Trace as D
+
+reshard :: Options -> IO ()
+reshard args = Kinesis.runAWS (optAWSProfile args) $ do
+    description <- Kinesis.describeStream (optStreamName args)
+    let shards = List.sort $ awsShard <$> Kinesis.getOpenShards description
+    case operations (optNumberOfShard args) shards of
+        Left _ -> liftIO $ putStrLn "ERROR!" -- TODO give more details here
+        Right ops -> do
+            let noops = [() | Noop _ <- ops]
+            let actualNumberOfOps = length ops - length noops
+            if actualNumberOfOps == 0
+                then liftIO $ putStrLn "Stream already evenly split, exiting"
+                else do
+                    liftIO $ putStrLn $ "Found "
+                        <> show (length shards)
+                        <> " open shards. Target is "
+                        <> show (optNumberOfShard args)
+                        <> ". Will apply "
+                        <> show actualNumberOfOps
+                        <> " operations."
+                    mapM_ (Kinesis.applyOperation (optStreamName args)) ops
+                    liftIO $ putStrLn "All done."
+
 
 operations :: Int -> [Shard] -> Either (Shard, [Shard]) [Operation]
 operations _ [] = Right []
@@ -66,16 +91,13 @@ mergeStream = go
             | newEnd == xEnd && newEnd+1 >= yEnd-1 && not (null ys) =
               let
                 s = Shard newStart newEnd
-                ys' = ((head ys) {shardStart = newEnd+1}) : tail ys
+                ys'' = ((head ys) {shardStart = newEnd+1}) : tail ys
               in
-                (s, xs, ys')
+                (s, xs, ys'')
             | newEnd == xEnd = (Shard newStart newEnd, xs, Shard (newEnd+1) yEnd : ys)
             | newEnd == yEnd && newEnd+1 >= xEnd-1 && not (null xs) =
-              let
-                s = Shard newStart xEnd
-                xs' = ((head xs) {shardStart = xEnd}) : tail xs
-              in
-                (s, xs, ys)
+              let s = Shard newStart xEnd
+              in (s, xs, ys)
             | newEnd == yEnd = (Shard newStart newEnd, Shard (newEnd+1) xEnd : xs, ys)
             -- TODO refactor that to surface the error in the type (Either or MonadThrow)
             -- this should never happen
@@ -125,28 +147,9 @@ splitShards seed (x:xs) =
   in
     (splitOp :) <$> splitShards seed' xs
 
--- splitShards seed [x, y] = Right [Split seed (shardStart y)]
--- splitShards seed ends =
---   let
---     mid = toInteger $ ceiling $ fromIntegral (shardEnd seed - shardStart seed) / 2 + fromIntegral (shardStart seed)
---     (half1, half2) = List.span (\s -> shardEnd s <= mid) ends
---   in
---     case half2 of
---         [] -> Left (seed, ends)
---         _ ->
---           let
---             newStart = shardStart (head half2)
---             seed1 = Shard { shardStart = shardStart seed, shardEnd = newStart - 1}
---             seed2 = Shard { shardStart = newStart, shardEnd = shardEnd seed }
---           in do
---             splits1 <- splitShards seed1 half1
---             splits2 <- splitShards seed2 half2
---             pure $ Split seed newStart : splits1 ++ splits2
-
-
 mergeShards :: [Shard] -> Shard -> [Operation]
 mergeShards [] _ = []
-mergeShards [x] _ = []
+mergeShards [_] _ = []
 mergeShards (x1:x2:xs) target =
   let
     newShard = Shard (shardStart x1) (shardEnd x2)
@@ -168,52 +171,7 @@ applyOperation (x1:x2:xs) op@(Merge (a,b)) | (a == x1) && (b == x2) =
         else Right $ Shard (shardStart x1) (shardEnd x2) : xs
 applyOperation (x:xs) op = fmap (x :) (applyOperation xs op)
 
--- applyOperation xs (Noop _) = xs
--- applyOperation (x:xs) (Split a n) | x == a =
---     Shard (shardStart x) n : Shard (n+1) (shardEnd x) : xs
--- applyOperation (x1:x2:xs) (Merge (a,b)) | (a == x1) && (b == x2) =
---     Shard (shardStart x1) (shardEnd x2) : xs
--- applyOperation (x:xs) op = x : applyOperation xs op
-
-
 validStream :: [Shard] -> Bool
 validStream shards = null shards
     && all (\sh -> shardStart sh < shardEnd sh) shards
     && all (\(sh1, sh2) -> shardEnd sh1 + 1 == shardStart sh2) (zip shards (tail shards))
-
-
--- fromShards :: [Shard] -> Stream
--- fromShards shards = Stream
---     { streamStart = shardStart (head shards)
---     , streamEnd = shardEnd (last shards)
---     , streamShards = shards
---     }
-
-
-min3 :: Ord a => a -> a -> a -> a
-min3 a b c = min a (min b c)
-
-testShards0 = [ Shard {shardStart=0, shardEnd=100} ]
-
-testShards1 =
-    [ Shard {shardStart=0, shardEnd=50}
-    , Shard {shardStart=51, shardEnd=100}
-    ]
-testShards2 =
-    [ Shard {shardStart=0, shardEnd=33}
-    , Shard {shardStart=34, shardEnd=66}
-    , Shard {shardStart=67, shardEnd=100}
-    ]
-
-testShards3 =
-    [ Shard {shardStart=0, shardEnd=20}
-    , Shard {shardStart=21, shardEnd=40}
-    , Shard {shardStart=41, shardEnd=60}
-    , Shard {shardStart=61, shardEnd=80}
-    , Shard {shardStart=81, shardEnd=100}
-    ]
-
-testShards4 =
-    [ Shard 0 33
-    , Shard 34 100
-    ]
