@@ -14,9 +14,11 @@ import Data.Monoid
 import Control.Concurrent (threadDelay)
 import Control.Exception
 import Data.Text
+import qualified Data.Text.IO as T
 import Control.Monad.IO.Class (liftIO)
 import Control.Lens
 import qualified Network.AWS as AWS
+import qualified Network.AWS.Auth as AWS
 import Network.AWS (MonadAWS, AWS)
 import Network.AWS.Data.Text (fromText)
 import qualified Network.AWS.Kinesis as Kinesis
@@ -25,21 +27,45 @@ import Reshard.Types
 import qualified Data.List as List
 import qualified Data.HashSet as Set
 
+import Control.Applicative
+import Control.Monad.Trans.Maybe
 import qualified System.Environment as Env
+import System.Directory (getHomeDirectory)
+import System.FilePath
+
+import qualified Data.Ini as Ini
 
 runAWS :: Maybe Text -> AWS a -> IO a
 runAWS mbProfile action = do
     lgr <- AWS.newLogger AWS.Info IO.stdout
-    let cred = maybe AWS.Discover AWS.FromProfile mbProfile
+    cf <- AWS.credFile
+    let cred = maybe AWS.Discover (flip AWS.FromFile cf) mbProfile
     env <- AWS.newEnv cred
-
-    -- version 1.5.0 and up will pick up the region from the env variable but
-    -- until then, manually check for the region and set it if present
-    region <- getEnvVariable "AWS_REGION"
-    let env' = case region >>= (fromText . pack) of
-            Left _ -> env
-            Right r -> env & AWS.envRegion .~ r
+    region <- getRegion mbProfile
+    let env' = case region of
+            Nothing -> env
+            Just r -> env & AWS.envRegion .~ r
     AWS.runResourceT $ AWS.runAWS (env' & AWS.envLogger .~ lgr) action
+
+-- amazonka version 1.5.0 will be smarter about regions, but in the meantime
+-- try to get the region from env variable and config file
+getRegion :: Maybe Text -> IO (Maybe AWS.Region)
+getRegion mbProfile = runMaybeT $ MaybeT getRegionFromEnvVariable
+    <|> MaybeT (getRegionFromFile mbProfile)
+
+getRegionFromEnvVariable :: IO (Maybe AWS.Region)
+getRegionFromEnvVariable = do
+    rawRegion <- getEnvVariable "AWS_REGION"
+    pure $ hush (rawRegion >>= fromText . pack)
+
+getRegionFromFile :: Maybe Text -> IO (Maybe AWS.Region)
+getRegionFromFile mbProfile = fmap hush $ do
+    home <- getHomeDirectory
+    let configPath = home </> ".aws" </> "config"
+    content <- T.readFile configPath
+    let profile = fromMaybe "default" mbProfile
+    pure $ Ini.parseIni content >>= Ini.lookupValue profile "region" >>= fromText
+
 
 getEnvVariable :: String -> IO (Either String String)
 getEnvVariable name = do
@@ -47,6 +73,11 @@ getEnvVariable name = do
     pure $ case result of
         Left (exc :: SomeException) -> Left (show exc)
         Right r -> Right r
+
+
+hush :: Either e a -> Maybe a
+hush (Left _) = Nothing
+hush (Right a) = Just a
 
 describeStream :: (MonadAWS m) => Text -> m Kinesis.DescribeStreamResponse
 describeStream streamName = do

@@ -25,6 +25,10 @@ library
                      , amazonka-kinesis
                      , lens
                      , unordered-containers
+                     , transformers
+                     , ini
+                     , directory
+                     , filepath
   exposed-modules:     Reshard.Kinesis
                      , Reshard.Types
                      , Reshard.Operations
@@ -40,6 +44,10 @@ executable reshard
                      , amazonka-kinesis
                      , lens
                      , unordered-containers
+                     , ini
+                     , transformers
+                     , directory
+                     , filepath
                      , optparse-applicative
   main-is:             Main.hs
   other-modules:       Reshard.Kinesis
