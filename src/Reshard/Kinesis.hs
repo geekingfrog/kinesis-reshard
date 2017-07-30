@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Reshard.Kinesis
     ( runAWS
     , describeStream
+    , waitStreamActive
     , getOpenShards
     , applyOperation
     )
@@ -18,8 +20,9 @@ import qualified Data.Text.IO as T
 import Control.Monad.IO.Class (liftIO)
 import Control.Lens
 import qualified Network.AWS as AWS
+import qualified Network.AWS.Data.Text as AWS
 import qualified Network.AWS.Auth as AWS
-import Network.AWS (MonadAWS, AWS)
+import Network.AWS (AWS)
 import Network.AWS.Data.Text (fromText)
 import qualified Network.AWS.Kinesis as Kinesis
 import qualified System.IO as IO
@@ -35,17 +38,16 @@ import System.FilePath
 
 import qualified Data.Ini as Ini
 
+import Control.Monad.Reader as R
+
 runAWS :: Maybe Text -> AWS a -> IO a
 runAWS mbProfile action = do
     lgr <- AWS.newLogger AWS.Info IO.stdout
     cf <- AWS.credFile
     let cred = maybe AWS.Discover (flip AWS.FromFile cf) mbProfile
     env <- AWS.newEnv cred
-    region <- getRegion mbProfile
-    let env' = case region of
-            Nothing -> env
-            Just r -> env & AWS.envRegion .~ r
-    AWS.runResourceT $ AWS.runAWS (env' & AWS.envLogger .~ lgr) action
+    region <- fmap (fromMaybe AWS.NorthVirginia) (getRegion mbProfile)
+    AWS.runResourceT $ AWS.runAWS (env & AWS.envLogger .~ lgr & AWS.envRegion .~ region) action
 
 -- amazonka version 1.5.0 will be smarter about regions, but in the meantime
 -- try to get the region from env variable and config file
@@ -69,7 +71,7 @@ getRegionFromFile mbProfile = fmap hush $ do
 
 getEnvVariable :: String -> IO (Either String String)
 getEnvVariable name = do
-    result <- try $ Env.getEnv name
+    result <- Control.Exception.try $ Env.getEnv name
     pure $ case result of
         Left (exc :: SomeException) -> Left (show exc)
         Right r -> Right r
@@ -79,10 +81,19 @@ hush :: Either e a -> Maybe a
 hush (Left _) = Nothing
 hush (Right a) = Just a
 
-describeStream :: (MonadAWS m) => Text -> m Kinesis.DescribeStreamResponse
+
+describeStream :: Text -> AWS Kinesis.DescribeStreamResponse
 describeStream streamName = do
-    resp <- AWS.send $ Kinesis.describeStream streamName
-    pure resp
+    stuff <- AWS.trying Kinesis._ResourceNotFoundException (AWS.send $ Kinesis.describeStream streamName)
+    case stuff of
+        Left err -> do
+            env <- R.ask
+            let baseMsg = maybe (streamName <> " not found") AWS.toText (err ^. AWS.serviceMessage)
+            let region = AWS.toText $ env ^. AWS.envRegion
+            let helpMsg = "Check the stream name. The region can be passed as environment variable AWS_REGION"
+            let errMsg = baseMsg <> " (region " <> region <> ") -- " <> helpMsg
+            throw $ StreamNotFoundException errMsg
+        Right resp -> pure resp
 
 
 -- Describe stream returns all shards, including the one already splitted/merged
@@ -110,7 +121,7 @@ makeShard kshard =
     AWSShard shardId parentIds shard
 
 
-applyOperation :: (MonadAWS m) => Text -> Operation -> m ()
+applyOperation :: Text -> Operation -> AWS ()
 applyOperation _ (Noop _) = pure ()
 applyOperation streamName (Split shard exclusiveStartKey) = do
     shardId <- findShardId streamName shard
@@ -121,7 +132,7 @@ applyOperation streamName (Split shard exclusiveStartKey) = do
             liftIO $ putStrLn $ "Splitting " <> unpack sId <> " at point " <> show exclusiveStartKey
             let req = Kinesis.splitShard streamName sId (pack $ show exclusiveStartKey)
             AWS.send req
-            waitStreamUpdated streamName
+            waitStreamActive streamName
 applyOperation streamName (Merge (shard1, shard2)) = do
     mbId1 <- findShardId streamName shard1
     mbId2 <- findShardId streamName shard2
@@ -130,23 +141,23 @@ applyOperation streamName (Merge (shard1, shard2)) = do
             -- TODO log instead of simple putStrLn
             liftIO $ putStrLn $ "Merging shards: " <> unpack id1 <> " and " <> unpack id2
             AWS.send $ Kinesis.mergeShards streamName id1 id2
-            waitStreamUpdated streamName
+            waitStreamActive streamName
         (Nothing, _) -> liftIO $ throwIO $ ShardNotFoundException (pack $ show shard1)
         (_, Nothing) -> liftIO $ throwIO $ ShardNotFoundException (pack $ show shard2)
 
 
-findShardId :: (MonadAWS m) => Text -> Shard -> m (Maybe Text)
+findShardId :: Text -> Shard -> AWS (Maybe Text)
 findShardId streamName shard = do
     shards <- getOpenShards <$> describeStream streamName
     pure $ case List.find ((== shard) . awsShard) shards of
         Nothing -> Nothing
         Just (AWSShard shardId _ _) -> Just shardId
 
-waitStreamUpdated :: (MonadAWS m) => Text -> m ()
-waitStreamUpdated streamName = loop
+waitStreamActive :: Text -> AWS ()
+waitStreamActive streamName = loop
   where
     loop = do
-        resp <- AWS.send $ Kinesis.describeStream streamName
+        resp <- describeStream streamName
         let status = resp ^. Kinesis.dsrsStreamDescription . Kinesis.sdStreamStatus
         if status /= Kinesis.Active
             then liftIO (threadDelay (10 ^ 6)) >> loop

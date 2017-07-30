@@ -6,9 +6,9 @@ import qualified Data.List as List
 import Reshard.Types
 import qualified Reshard.Kinesis as Kinesis
 
-
 reshard :: Options -> IO ()
 reshard args = Kinesis.runAWS (optAWSProfile args) $ do
+    Kinesis.waitStreamActive (optStreamName args)
     description <- Kinesis.describeStream (optStreamName args)
     let shards = List.sort $ awsShard <$> Kinesis.getOpenShards description
     case operations (optNumberOfShard args) shards of

@@ -35,6 +35,12 @@ newtype ReshardException = ShardNotFoundException Text
 
 instance Exception ReshardException
 
+newtype StreamNotFoundException = StreamNotFoundException Text
+    deriving (Show, Typeable)
+
+instance Exception StreamNotFoundException
+
+
 data Options = Options
     { optStreamName :: !Text
     , optNumberOfShard :: !Int
