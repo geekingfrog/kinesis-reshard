@@ -65,7 +65,7 @@ getRegionFromFile mbProfile = fmap hush $ do
     home <- getHomeDirectory
     let configPath = home </> ".aws" </> "config"
     content <- T.readFile configPath
-    let profile = fromMaybe "default" mbProfile
+    let profile = fromMaybe "default" (("profile " <>) <$> mbProfile)
     pure $ Ini.parseIni content >>= Ini.lookupValue profile "region" >>= fromText
 
 
