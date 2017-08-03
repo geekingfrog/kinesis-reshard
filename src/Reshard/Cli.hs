@@ -5,6 +5,8 @@ import Data.Monoid
 import Data.Text (pack)
 
 import Reshard.Types
+import qualified Paths_kinesis_reshard as Meta
+import Data.Version (showVersion)
 
 options :: Parser Options
 options = Options
@@ -27,10 +29,16 @@ options = Options
         <> help "which aws profile to use"
         )
 
+testVersion :: Parser (a -> a)
+testVersion = abortOption (InfoMsg $ "version: " <> showVersion Meta.version) $ mconcat
+    [ long "version"
+    , short 'V'
+    , help "Show version and exit"
+    ]
 
 opts :: ParserInfo Options
 opts = info
-    (options <**> helper)
+    (options <**> (testVersion <*> helper))
     (fullDesc <> progDesc "Evenly reshard a kinesis stream")
 
 parseArgs :: IO Options
