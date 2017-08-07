@@ -20,3 +20,4 @@ This tools doesn't suffer from these limitations. You may have some trouble if y
 
 # Build and installation
 You'll need the haskell build tool [stack](https://docs.haskellstack.org/en/stable/GUIDE/#downloading-and-installation). Then, simply run `stack install`.
+Or simply download the [latest release](https://github.com/geekingfrog/kinesis-reshard/releases/).
