@@ -9,8 +9,8 @@ import qualified Reshard.Kinesis as Kinesis
 reshard :: Options -> IO ()
 reshard args = Kinesis.runAWS (optAWSProfile args) $ do
     Kinesis.waitStreamActive (optStreamName args)
-    description <- Kinesis.describeStream (optStreamName args)
-    let shards = List.sort $ awsShard <$> Kinesis.getOpenShards description
+    kinesisShards <- Kinesis.getShards (optStreamName args)
+    let shards = List.sort $ awsShard <$> Kinesis.getOpenShards kinesisShards
     case operations (optNumberOfShard args) shards of
         Left _ -> liftIO $ putStrLn "ERROR!" -- TODO give more details here
         Right ops -> do
@@ -26,6 +26,7 @@ reshard args = Kinesis.runAWS (optAWSProfile args) $ do
                         <> ". Will apply "
                         <> show actualNumberOfOps
                         <> " operations."
+                    liftIO $ print ops
                     mapM_ (Kinesis.applyOperation (optStreamName args)) ops
                     liftIO $ putStrLn "All done."
 
@@ -36,7 +37,7 @@ operations targetNumShard shards = do
     let finalShards = makeStream targetNumShard (shardStart $ head shards) (shardEnd $ last shards)
     let tmpShards = intermediateStream targetNumShard shards
     let splitParts = assocSplits shards tmpShards
-    splitOps <- concat <$> sequence (fmap (uncurry splitShards) splitParts)
+    splitOps <- concat <$> traverse (uncurry splitShards) splitParts
     let mergeParts = assocMerge tmpShards finalShards
     let mergeOps = concatMap (uncurry (flip mergeShards)) mergeParts
     pure $ splitOps ++ mergeOps

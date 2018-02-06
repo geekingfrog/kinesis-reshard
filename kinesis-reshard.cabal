@@ -32,6 +32,9 @@ library
                      , exceptions
                      , resourcet
                      , mtl
+                     , retry
+                     , conduit
+                     , conduit-combinators
   exposed-modules:     Reshard.Kinesis
                      , Reshard.Types
                      , Reshard.Operations
@@ -57,6 +60,9 @@ executable reshard
                      , resourcet
                      , mtl
                      , optparse-applicative
+                     , retry
+                     , conduit
+                     , conduit-combinators
   main-is:             Main.hs
   other-modules:       Reshard.Kinesis
                      , Reshard.Types
