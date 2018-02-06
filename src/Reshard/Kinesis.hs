@@ -4,9 +4,7 @@
 
 module Reshard.Kinesis
     ( runAWS
-    , describeStream
     , waitStreamActive
-    , getShards
     , getOpenShards
     , applyOperation
     )
@@ -98,6 +96,9 @@ describeStream streamName = do
             throw $ StreamNotFoundException errMsg
         Right resp -> pure resp
 
+getOpenShards :: Text -> AWS [AWSShard]
+getOpenShards streamName = openShards <$> getShards streamName
+
 getShards :: Text -> AWS [Kinesis.Shard]
 getShards streamName = runConduit $ AWS.paginate (Kinesis.describeStream streamName)
     .| concatMapC (^. Kinesis.dsrsStreamDescription . Kinesis.sdShards)
@@ -107,8 +108,8 @@ getShards streamName = runConduit $ AWS.paginate (Kinesis.describeStream streamN
 -- Describe stream returns all shards, including the one already splitted/merged
 -- This function only returns leaves
 -- TODO handle the case when there are more shards available (hasMoreShards)
-getOpenShards :: [Kinesis.Shard] -> [AWSShard]
-getOpenShards kinesisShards =
+openShards :: [Kinesis.Shard] -> [AWSShard]
+openShards kinesisShards =
   let
     allShards = fmap makeShard kinesisShards
     allParentIds = Set.fromList $ concatMap awsShardParentIds allShards
@@ -163,7 +164,7 @@ applyOperation streamName (Merge (shard1, shard2)) = do
 
 findShardId :: Text -> Shard -> AWS (Maybe Text)
 findShardId streamName shard = do
-    shards <- getOpenShards <$> getShards streamName
+    shards <- getOpenShards streamName
     pure $ case List.find ((== shard) . awsShard) shards of
         Nothing -> Nothing
         Just (AWSShard shardId _ _) -> Just shardId

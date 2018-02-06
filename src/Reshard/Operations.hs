@@ -9,10 +9,10 @@ import qualified Reshard.Kinesis as Kinesis
 reshard :: Options -> IO ()
 reshard args = Kinesis.runAWS (optAWSProfile args) $ do
     Kinesis.waitStreamActive (optStreamName args)
-    kinesisShards <- Kinesis.getShards (optStreamName args)
-    let shards = List.sort $ awsShard <$> Kinesis.getOpenShards kinesisShards
+    openShards <- Kinesis.getOpenShards (optStreamName args)
+    let shards = List.sort $ fmap awsShard openShards
     case operations (optNumberOfShard args) shards of
-        Left _ -> liftIO $ putStrLn "ERROR!" -- TODO give more details here
+        Left e -> liftIO $ putStrLn $ "ERROR!" <> show e
         Right ops -> do
             let noops = [() | Noop _ <- ops]
             let actualNumberOfOps = length ops - length noops
